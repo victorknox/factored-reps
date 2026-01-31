@@ -1,0 +1,26 @@
+name: simple_tracker
+instance:
+  _target_: fwh_core.activations.activation_tracker.ActivationTracker
+  analyses:
+    pca:
+      instance:
+        _target_: fwh_core.activations.activation_analyses.PcaAnalysis
+        n_components: null # must be larger than min(n_samples, n_features)
+        last_token_only: false
+        concat_layers: false
+        use_probs_as_weights: false
+        skip_first_token: true
+        skip_deduplication: true
+        variance_thresholds: [0.80, 0.90, 0.95, 0.99]
+
+    reg:
+      instance:
+        _target_: fwh_core.activations.activation_analyses.LinearRegressionSVDAnalysis
+        concat_belief_states: true
+        last_token_only: false
+        concat_layers: false
+        use_probs_as_weights: false
+        compute_subspace_orthogonality: false
+        skip_first_token: true
+        skip_deduplication: true
+        rcond_values: [1e-15, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2]

@@ -1,0 +1,14 @@
+num_steps: 500000
+batch_size: 25000
+analysis_batch_size: 1024
+log_cheap_every: 100
+log_expensive_every: 10000
+log_activations_every: 10000
+evaluate_every: 1000
+checkpoint_every: 5000
+checkpoint_schedule:
+  - [0, 10, 1]
+  - [10, 500, 10]
+  - [500, 1000, 100]
+  - [1000, 5000, 1000]
+  - [5000, null, 5000]

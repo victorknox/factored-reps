@@ -1,0 +1,12 @@
+name: windowed_plateau
+instance:
+  _target_: fwh_core.optimization.lr_schedulers.WindowedReduceLROnPlateau
+  window_size: 10
+  update_every: 100
+  mode: min
+  factor: 0.7
+  patience: 100        # 100 checks = 10000 steps without improvement → reduce
+  threshold: 1e-4
+  threshold_mode: rel
+  cooldown: 200        # 20000 steps cooldown after reduction
+  min_lr: 1e-7

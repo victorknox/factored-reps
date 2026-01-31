@@ -1,0 +1,8 @@
+name: loss_only_metric_tracker
+instance:
+  _target_: fwh_core.metrics.metric_tracker.MetricTracker
+  metric_names:
+    - loss
+  metric_kwargs:
+    ma_window_size: 100 # Function of number of sequences seen so far?
+    ema_gamma: 0.9 # Find some opinions

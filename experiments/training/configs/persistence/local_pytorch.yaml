@@ -1,0 +1,4 @@
+instance:
+  _target_: fwh_core.persistence.local_pytorch_persister.LocalPytorchPersister
+  directory: ${hydra:runtime.output_dir}/checkpoints
+  filename: model.pt
