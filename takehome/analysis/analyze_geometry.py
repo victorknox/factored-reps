@@ -25,18 +25,41 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import matplotlib.cm as cm
 
-from experiments.models.attention_only import AttentionOnly, AttentionOnlyConfig
-
-
 def load_model(checkpoint_dir, device="cpu"):
     with open(checkpoint_dir / "model_config.json") as f:
         mcfg = json.load(f)
-    cfg = AttentionOnlyConfig(**mcfg, seed=42)
-    model = AttentionOnly(cfg)
-    model.load_state_dict(torch.load(checkpoint_dir / "best_model.pt", map_location=device, weights_only=True))
-    model.eval()
-    model.to(device)
-    return model, cfg
+
+    arch = mcfg.get("architecture", "attn_only")
+
+    if arch == "full":
+        from transformer_lens import HookedTransformer, HookedTransformerConfig
+        cfg = HookedTransformerConfig(
+            d_model=mcfg["d_model"], d_head=mcfg["d_head"],
+            n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
+            n_ctx=mcfg["n_ctx"], d_mlp=mcfg["d_mlp"],
+            d_vocab=mcfg["d_vocab"], act_fn=mcfg.get("act_fn", "relu"),
+            normalization_type=mcfg.get("normalization_type", "LN"),
+            device=device, seed=42,
+        )
+        model = HookedTransformer(cfg)
+        model.load_state_dict(torch.load(checkpoint_dir / "best_model.pt",
+                                         map_location=device, weights_only=True))
+        model.eval()
+    else:
+        from experiments.models.attention_only import AttentionOnly, AttentionOnlyConfig
+        cfg = AttentionOnlyConfig(
+            d_vocab=mcfg["d_vocab"], d_model=mcfg["d_model"],
+            n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
+            n_ctx=mcfg["n_ctx"],
+            normalization_type=mcfg.get("normalization_type", "LN"), seed=42,
+        )
+        model = AttentionOnly(cfg)
+        model.load_state_dict(torch.load(checkpoint_dir / "best_model.pt",
+                                         map_location=device, weights_only=True))
+        model.to(device)
+        model.eval()
+
+    return model, mcfg
 
 
 def extract_activations(model, tokens, batch_size=256, device="cpu"):
@@ -411,12 +434,13 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--results_dir", type=str, default=None)
+    parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
     results_dir = Path(args.results_dir) if args.results_dir else base_dir / "results"
-    checkpoint_dir = results_dir / "checkpoints"
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else results_dir / "checkpoints"
     figures_dir = results_dir / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
 
@@ -440,16 +464,24 @@ def main():
     for k, v in sorted(activations.items()):
         print(f"    {k}: {v.shape}")
 
-    # Identify residual stream layers
+    # Identify residual stream layers (must be 3D with last dim = d_model)
+    d_model = cfg["d_model"]
     layer_keys = []
     for k in sorted(activations.keys()):
-        if 'resid_post' in k or 'ln_final' in k:
-            layer_keys.append(k)
+        if activations[k].ndim == 3 and activations[k].shape[-1] == d_model:
+            if 'resid_post' in k or 'resid_mid' in k:
+                layer_keys.append(k)
 
-    # If we didn't find standard names, just use all 3D activations
+    # Add final ln if present
+    for k in sorted(activations.keys()):
+        if ('ln_final' in k or 'hook_ln_final' in k) and activations[k].ndim == 3 and activations[k].shape[-1] == d_model:
+            layer_keys.append(k)
+            break
+
+    # Fallback
     if not layer_keys:
         layer_keys = [k for k in sorted(activations.keys())
-                     if activations[k].ndim == 3 and activations[k].shape[-1] == cfg.d_model]
+                     if activations[k].ndim == 3 and activations[k].shape[-1] == d_model]
 
     print(f"\nResidual stream layers: {layer_keys}")
 
