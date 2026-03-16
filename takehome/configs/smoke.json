@@ -1,0 +1,15 @@
+{
+  "d_vocab": 3,
+  "d_model": 64,
+  "n_heads": 2,
+  "n_layers": 2,
+  "normalization_type": "LN",
+  "lr": 1e-3,
+  "weight_decay": 0,
+  "grad_clip": 1.0,
+  "batch_size": 256,
+  "num_epochs": 10,
+  "log_every": 1,
+  "seed": 42,
+  "checkpoint_epochs": [5, 10]
+}
