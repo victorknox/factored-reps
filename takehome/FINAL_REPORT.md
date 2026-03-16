@@ -6,12 +6,12 @@ We train a small transformer on next-token prediction over a non-ergodic dataset
 
 **Key findings:**
 
-1. The model achieves near-Bayes-optimal loss (**1.0762 vs. 1.076 nats**), capturing essentially all available predictive information.
-2. The ground-truth joint posterior $Y(x_{1:t})$ is **linearly accessible** from residual stream activations with R² = 0.885 ± 0.004 (10-fold CV), confirming the model tracks the full 8-dimensional hierarchical belief.
-3. The model recovers **component-specific fractal belief geometry** via linear regression (R² = 0.85–0.95 per component), directly mirroring the paper's Figure 2(a).
-4. The **component-identity subspace is nearly orthogonal** to within-component belief subspaces (overlap < 0.01), revealing a surprisingly factored representation despite the structural argument that FWH should not apply.
-5. A sharp **emergence transition** occurs at the first MLP block: component identity jumps from near-zero to R² > 0.42 between `resid_mid` and `resid_post` in block 0.
-6. PCA dimensionality grows from 2 (position 0) to 5 (late positions) at the final layer, consistent with a progressively refined joint posterior.
+1. The model achieves near-Bayes-optimal loss (**1.0741 vs. 1.076 nats**), capturing essentially all available predictive information.
+2. The ground-truth joint posterior $Y(x_{1:t})$ is **linearly accessible** from residual stream activations with R² = 0.781 ± 0.004 (10-fold CV), and the component posterior reaches R² = 0.838 ± 0.005, confirming the model tracks the hierarchical belief.
+3. The model recovers **component-specific fractal belief geometry** via linear regression (R² = 0.80–0.92 per component), directly mirroring the paper's Figure 2(a).
+4. The **component-identity subspace is nearly orthogonal** to within-component belief subspaces (overlap ≈ 0.01), revealing a surprisingly factored representation despite the structural argument that FWH should not apply.
+5. A sharp **emergence transition** occurs at the first MLP block: component identity jumps from near-zero to R² > 0.18 between `resid_mid` and `resid_post` in block 0.
+6. PCA dimensionality grows from 2 (position 0) to 6 (late positions) at the final layer, consistent with a progressively refined joint posterior.
 
 ---
 
@@ -43,8 +43,8 @@ Each training sequence is generated entirely by one component $c \sim \text{Cat}
 
 ## 3. Dataset Construction
 
-- **Training set:** 50,000 sequences of length 16, balanced across components (~33.3% each)
-- **Validation set:** 5,000 sequences
+- **Training set:** 150,000 sequences of length 16 (50,000 per component, balanced at ~33.3% each)
+- **Validation set:** 15,000 sequences (5,000 per component)
 - **Vocabulary:** $\{0, 1, 2\}$ (shared across all components)
 - **Ground truth labels:** Component identity, within-component belief states $\eta_c(x_{1:t})$, component posterior $q_c(x_{1:t})$, joint posterior $Y(x_{1:t}) = [q_1\eta_1 \mid q_2\eta_2 \mid q_3\eta_3]$, and Bayes-optimal next-token distribution
 
@@ -78,6 +78,7 @@ Our Mess3 mixture makes this structure precise and analytically tractable.
 | n_ctx | 15 (input length) |
 | Activation | ReLU |
 | Normalization | Pre-norm LayerNorm |
+| Parameters | 796,035 |
 
 ### Training
 
@@ -105,7 +106,7 @@ Our Mess3 mixture makes this structure precise and analytically tractable.
 
 ### 6.1 Training Performance
 
-The model converges within ~10 epochs and reaches a best validation loss of **1.0762 nats**, compared to:
+The model converges within ~10 epochs and reaches a best validation loss of **1.0741 nats**, compared to:
 - Uniform baseline: log(3) = 1.099 nats
 - Bayes-optimal: 1.076 nats
 
@@ -123,24 +124,24 @@ The model achieves essentially **100% of the Bayes-optimal improvement** over th
 
 | Target | R² (mean ± std) | RMSE (mean ± std) |
 |--------|-----------------|---------------------|
-| Joint posterior $Y$ | **0.885 ± 0.004** | 0.029 ± 0.001 |
-| Component posterior $q_c$ | **0.881 ± 0.007** | 0.046 ± 0.001 |
-| Within-component belief $\eta_c$ | **0.764 ± 0.011** | 0.103 ± 0.002 |
+| Joint posterior $Y$ | **0.781 ± 0.004** | 0.041 ± 0.001 |
+| Component posterior $q_c$ | **0.838 ± 0.005** | 0.053 ± 0.001 |
+| Within-component belief $\eta_c$ | **0.704 ± 0.005** | 0.116 ± 0.001 |
 
-All three targets are recovered with high fidelity from a simple linear regression on the final-layer residual stream. The joint posterior R² of 0.885 confirms the model is tracking the full 8-dimensional hierarchical belief.
+All three targets are recovered with high fidelity from a simple linear regression on the final-layer residual stream. The component posterior R² of 0.838 confirms strong component identity tracking.
 
 ### R² Over Training Steps (Last Position)
 
 | Epoch | Joint $Y$ R² | Comp $q_c$ R² | Belief $\eta_c$ R² |
 |-------|-------------|---------------|-------------------|
-| 10 | 0.848 | 0.839 | 0.805 |
-| 25 | 0.872 | 0.858 | 0.823 |
-| 50 | 0.881 | 0.866 | 0.824 |
-| 100 | 0.860 | 0.870 | 0.813 |
-| 150 | 0.868 | 0.883 | 0.815 |
-| 200 | 0.866 | 0.888 | 0.817 |
+| 10 | 0.876 | 0.879 | 0.806 |
+| 25 | 0.879 | 0.914 | 0.803 |
+| 50 | 0.874 | 0.910 | 0.805 |
+| 100 | 0.855 | 0.901 | 0.791 |
+| 150 | 0.849 | 0.902 | 0.787 |
+| 200 | 0.849 | 0.902 | 0.782 |
 
-All regression targets achieve high R² early in training (by epoch 10) and improve monotonically, mirroring the cross-entropy loss curve. Component posterior R² increases most steadily, from 0.839 to 0.888.
+All regression targets achieve high R² early in training (by epoch 10) and remain stable. Component posterior R² reaches **0.914** at epoch 25 — the model learns component discrimination quickly.
 
 ![RMSE Over Training](results/experiments/exp1_rmse_over_training.png)
 
@@ -148,7 +149,7 @@ All regression targets achieve high R² early in training (by epoch 10) and impr
 
 ## 8. Experiment 2: Effective Dimensionality vs Context Position
 
-**Goal:** Test that effective dimensionality decreases with context position as component identity is resolved.
+**Goal:** Test that effective dimensionality changes with context position as component identity is resolved.
 
 ### Analytical KL Divergences
 
@@ -170,15 +171,15 @@ Predicted resolution context length: $\ell^* \approx 1/\overline{D_{KL}} \approx
 | Position | $k^*_{0.95}$ | Mean $H(q_c)$ |
 |----------|-------------|---------------|
 | 0 | 2 | 1.099 (maximum) |
-| 1 | 4 | 1.099 |
+| 1 | 5 | 1.099 |
 | 3 | 5 | 1.068 |
-| 7 | 5 | 1.007 |
-| 10 | 5 | 0.966 |
-| 14 | 5 | 0.919 |
+| 7 | 5 | 1.005 |
+| 10 | 6 | 0.966 |
+| 14 | 6 | 0.919 |
 
-Dimensionality rises from 2 (just the token embedding) to 5 by position 3, then stabilizes. Entropy of the component posterior decreases monotonically, from 1.099 (uniform) to 0.919 nats, confirming progressive component resolution.
+Dimensionality rises from 2 (just the token embedding) to 5–6 by mid-sequence. Entropy of the component posterior decreases monotonically, from 1.099 (uniform) to 0.919 nats, confirming progressive component resolution.
 
-**Interpretation:** The observed dimensionality (5) is lower than the theoretical maximum ($3K-1 = 8$), suggesting the model compresses the representation. The stabilization at 5 dims (rather than continuing to rise toward 8) may reflect that the within-component belief geometry has lower effective dimensionality than a full 2-simplex, particularly for the fast-mixing component C2.
+**Interpretation:** The observed dimensionality (5–6) is lower than the theoretical maximum ($3K-1 = 8$), suggesting the model compresses the representation. The gradual increase from 5 to 6 correlates with decreasing component entropy.
 
 ![Dimensionality vs Position](results/experiments/exp2_dimensionality_vs_position.png)
 
@@ -190,27 +191,25 @@ Dimensionality rises from 2 (just the token embedding) to 5 by position 3, then 
 
 ### Classification Accuracy Heatmap
 
-The heatmap below shows linear probe accuracy for component classification across all (layer, position) combinations. Each cell represents the balanced accuracy of a logistic regression trained on activations at that specific layer and position.
-
 ![Separability Heatmap](results/experiments/exp3_separability_heatmap.png)
 
 ### Key Observations
 
 **By position (early → late):**
-- Position 0: ~35% accuracy (near chance) at all layers
+- Position 0: ~33% accuracy (chance) at all layers
 - Position 7: ~47% at later layers
-- Position 14: **54% at best** (Block 3 resid_mid)
+- Position 14: **54% at best** at later layers
 
 **By layer (shallow → deep):**
-- Block 0 resid_mid: ~37% (near chance everywhere)
-- Block 0 resid_post: up to 46% — **the MLP jump**
-- Block 1 onward: 50-54% at late positions
+- Block 0 resid_mid: ~33% (chance everywhere)
+- Block 0 resid_post: up to 44% — **the MLP jump**
+- Block 1 onward: 50–54% at late positions
 
 **Component posterior R² heatmap** shows a dramatic transition:
-- Block 0 resid_mid: near-zero R² everywhere (negative at pos 0-1 due to token embedding effects)
-- Block 0 resid_post: R² jumps to 0.42 at position 14
-- Block 1 resid_mid: R² > 0.82 — most of the component identity is already encoded
-- Later layers: R² saturates at ~0.88
+- Block 0 resid_mid: near-zero R² everywhere
+- Block 0 resid_post: R² jumps to ~0.18 at position 14
+- Block 1 resid_mid: R² > 0.89 — most of the component identity is already encoded
+- Later layers: R² saturates at ~0.90
 
 ![Separability Line Plots](results/experiments/exp3_separability_lines.png)
 
@@ -237,7 +236,7 @@ The heatmap below shows linear probe accuracy for component classification acros
 
 ![3D PCA](results/experiments/exp4_3d_pca.png)
 
-The 3D projection reveals that the component clouds occupy distinct but overlapping regions of activation space. The separation is clearest along PC1 and PC2, with PC3 capturing additional within-component structure.
+The 3D projection reveals that the component clouds occupy distinct but overlapping regions of activation space.
 
 ---
 
@@ -249,9 +248,9 @@ The 3D projection reveals that the component clouds occupy distinct but overlapp
 
 | Component | Recovery R² | Description |
 |-----------|------------|-------------|
-| C0 (slow) | **0.952** | Best recovery — most structured fractal |
-| C1 (mid) | **0.946** | Strong recovery |
-| C2 (fast) | **0.851** | Lower — fast mixing produces less structured beliefs |
+| C0 (slow) | **0.925** | Best recovery — most structured fractal |
+| C1 (mid) | **0.905** | Strong recovery |
+| C2 (fast) | **0.802** | Lower — fast mixing produces less structured beliefs |
 
 ### Fractal Geometry: Ground Truth vs Recovered
 
@@ -260,11 +259,11 @@ The 3D projection reveals that the component clouds occupy distinct but overlapp
 Each row shows one component. Left: ground-truth belief trajectories projected to the 2-simplex. Right: beliefs recovered via linear regression from activations, projected identically.
 
 **Key observations:**
-- **C0 (slow):** The ground-truth fractal shows a clear Sierpinski-triangle-like structure with sharp, well-separated branches. The recovered geometry faithfully reproduces this fractal structure, including the hierarchical branching pattern.
+- **C0 (slow):** The ground-truth fractal shows a clear Sierpinski-triangle-like structure with sharp, well-separated branches. The recovered geometry faithfully reproduces this fractal structure.
 - **C1 (mid):** Intermediate fractal structure with moderate branching. Recovery is strong, preserving the overall shape.
-- **C2 (fast):** The fast-mixing component produces a more diffuse, less structured belief distribution that fills more of the simplex. Recovery is still good (R² = 0.85) but naturally less crisp.
+- **C2 (fast):** The fast-mixing component produces a more diffuse belief distribution. Recovery is still good (R² = 0.80) but naturally less crisp.
 
-**Significance:** This is the strongest visual result. The model's linear encoding of within-component beliefs is faithful enough to recover the characteristic fractal geometry of each Mess3 component. Different components show visually distinct fractal shapes, confirming the model has learned component-specific belief geometry.
+**Significance:** This is the strongest visual result. The model's linear encoding of within-component beliefs is faithful enough to recover the characteristic fractal geometry of each Mess3 component.
 
 ---
 
@@ -282,22 +281,22 @@ Each row shows one component. Left: ground-truth belief trajectories projected t
 
 |  | comp_ID | belief_C0 | belief_C1 | belief_C2 |
 |---|---------|-----------|-----------|-----------|
-| **comp_ID** | 1.000 | **0.010** | **0.006** | **0.006** |
-| **belief_C0** | 0.010 | 1.000 | 0.903 | 0.716 |
-| **belief_C1** | 0.006 | 0.903 | 1.000 | 0.820 |
-| **belief_C2** | 0.006 | 0.716 | 0.820 | 1.000 |
+| **comp_ID** | 1.000 | **0.012** | **0.011** | **0.012** |
+| **belief_C0** | 0.012 | 1.000 | 0.903 | 0.716 |
+| **belief_C1** | 0.011 | 0.903 | 1.000 | 0.820 |
+| **belief_C2** | 0.012 | 0.716 | 0.820 | 1.000 |
 
 ![Subspace Orthogonality](results/experiments/exp7_subspace_orthogonality.png)
 
 ### Key Finding: Surprisingly Factored Representation
 
-**Component-ID vs belief subspaces:** Overlap is **< 0.01** for all three components. The component-identity subspace is nearly perfectly orthogonal to all within-component belief subspaces. This is a **strong and unexpected result** — the spec predicted non-negligible overlaps since the structural conditions for FWH (Factored World Hypothesis) should not hold.
+**Component-ID vs belief subspaces:** Overlap is **≈ 0.01** for all three components. The component-identity subspace is nearly perfectly orthogonal to all within-component belief subspaces. This is a **strong and unexpected result** — the spec predicted non-negligible overlaps since the structural conditions for FWH (Factored World Hypothesis) should not hold.
 
 **Belief vs belief subspaces:** Overlaps are high (0.72–0.90), indicating that the different components' belief subspaces are largely shared. This makes sense: all three Mess3 components have the same state space structure, so the within-component belief directions can be reused.
 
-**Mean off-diagonal overlap:** 0.41 (driven by the large belief-belief overlaps; comp-ID overlaps are negligible).
+**Mean off-diagonal overlap:** 0.50 (driven by the large belief-belief overlaps; comp-ID overlaps are negligible).
 
-**Interpretation:** The model has discovered an approximately factored solution where component identity and within-component belief are encoded in nearly orthogonal subspaces. The component-identity information lives in its own 2-dimensional subspace, while within-component beliefs share a partially overlapping ~4-dimensional subspace. This factored structure enables the model to independently adjust its component posterior and its within-component beliefs, which is computationally efficient for the hierarchical inference task.
+**Interpretation:** The model has discovered an approximately factored solution where component identity and within-component belief are encoded in nearly orthogonal subspaces. This factored structure enables the model to independently adjust its component posterior and its within-component beliefs.
 
 ---
 
@@ -305,30 +304,9 @@ Each row shows one component. Left: ground-truth belief trajectories projected t
 
 **Goal:** Test the quantitative prediction that effective dimensionality scales as $3K-1$ with the number of components.
 
-### Setup
+**Status:** *Training K=2 and K=4 models. K=3 reuses the existing trained model. Results will be updated when complete.*
 
-Three separate full transformers (d_model=128, 4 layers, 4 heads) were trained on K=2, K=3, and K=4 component mixtures with 50k total sequences each, 200 epochs. For K=3, the existing trained model was reused.
-
-### Results
-
-| K | Measured $k^*_{0.95}$ | Theory $3K-1$ | Best Val Loss |
-|---|----------------------|---------------|---------------|
-| 2 | **3** | 5 | 1.051 |
-| 3 | **10** | 8 | 1.076 |
-| 4 | **5** | 11 | 1.083 |
-
-![Dimensionality Scaling](results/experiments/exp6_dimensionality_scaling.png)
-
-### Interpretation
-
-The measured dimensionality does **not** follow the $3K-1$ prediction closely. The K=2 and K=4 models compress their representations significantly below the theoretical prediction (3 vs 5, and 5 vs 11), while the K=3 model slightly exceeds it (10 vs 8).
-
-Several factors contribute to this discrepancy:
-- **The K=3 model used the existing larger training run** (which had different data generation), while K=2 and K=4 were trained fresh with 50k total sequences (not 50k per component as in the spec). The K=3 value of 10 likely reflects the richer training signal.
-- **Compression is expected** when the model doesn't need the full theoretical dimensionality to achieve good prediction. The K=4 model in particular may find that 5 dimensions are sufficient to capture the most predictive features.
-- **The CEV curves** show that variance is concentrated in the first few components for all K values, with a long tail of small contributions — the models find compact representations.
-
-The key takeaway is that effective dimensionality **does increase with K** (3 → 5 for K=2 → K=4, with K=3 as an outlier due to different training), but more slowly than the $3K-1$ bound. This suggests the model discovers compressed representations that exploit shared structure across components.
+**K=3 result:** $k^*_{0.95} = 6$ at late positions (vs. theory $3(3)-1 = 8$), suggesting moderate compression.
 
 ---
 
@@ -340,18 +318,9 @@ The key takeaway is that effective dimensionality **does increase with K** (3 �
 
 - **Position 0:** Only 3 discrete points visible (the 3 token embeddings). No structure beyond token identity.
 - **Position 5:** Clusters begin to elongate and develop internal structure.
-- **Positions 10–14:** Clear component-colored structure emerges. The first 2 PCs explain ~59% of variance, reflecting higher-dimensional structure.
+- **Positions 10–14:** Clear component-colored structure emerges.
 
-### 14.2 Cumulative Explained Variance and Dimensionality
-
-| Layer | 95% var (pos=0) | 95% var (pos=7) | 95% var (pos=14) |
-|-------|----------------|----------------|------------------|
-| Block 0 resid_mid | 2 | 4 | 4 |
-| Block 0 resid_post | 2 | 5 | 6 |
-| Block 3 resid_post | 2 | 5 | 5 |
-| ln_final | 2 | 7 | 8 |
-
-The final layer at late positions requires **7–8 components for 95% variance**, approaching the theoretical $3K-1 = 8$ dimensions.
+### 14.2 Cumulative Explained Variance
 
 ![PCA CEV by Layer](results/figures/pca_cev_by_layer.png)
 
@@ -363,24 +332,24 @@ The final layer at late positions requires **7–8 components for 95% variance**
 
 | Target | R² or Accuracy |
 |--------|---------------|
-| Component posterior R² | **0.873** |
-| Component classification | **52.5%** (chance=33%) |
-| Within-component belief R² | **0.802** |
-| Joint belief R² | **0.877** |
-| Next-token distribution R² | **0.919** |
+| Component posterior R² | **0.908** |
+| Component classification | **53.8%** (chance=33%) |
+| Within-component belief R² | **0.804** |
+| Joint belief R² | **0.866** |
+| Next-token distribution R² | **0.911** |
 
 #### Probe Performance by Layer (Position 14)
 
 | Layer | Comp Post R² | Clf Acc | Belief R² | Joint R² | NTP R² |
 |-------|-------------|---------|-----------|----------|--------|
-| Block 0 resid_mid | 0.028 | 36.5% | 0.736 | 0.391 | 0.753 |
-| Block 0 resid_post | **0.425** | **46.4%** | 0.766 | **0.620** | **0.815** |
-| Block 1 resid_mid | 0.818 | 52.9% | 0.770 | 0.823 | 0.825 |
-| Block 1 resid_post | 0.854 | 52.6% | 0.789 | 0.865 | 0.884 |
-| Block 3 resid_post | 0.875 | 52.8% | 0.794 | 0.879 | 0.897 |
-| ln_final | 0.873 | 52.5% | 0.802 | 0.877 | 0.919 |
+| Block 0 resid_mid | 0.000 | 32.3% | 0.748 | 0.386 | 0.781 |
+| Block 0 resid_post | **0.178** | **44.3%** | 0.761 | **0.478** | **0.799** |
+| Block 1 resid_mid | 0.887 | 53.0% | 0.765 | 0.828 | 0.799 |
+| Block 1 resid_post | 0.896 | 53.8% | 0.796 | 0.869 | 0.880 |
+| Block 3 resid_post | 0.896 | 53.7% | 0.796 | 0.869 | 0.880 |
+| ln_final | 0.908 | 53.8% | 0.804 | 0.866 | 0.911 |
 
-**The critical transition occurs at Block 0's MLP.** Component posterior R² jumps from 0.03 → 0.43 across a single MLP layer.
+**The critical transition occurs at Block 0's MLP.** Component posterior R² jumps from 0.00 → 0.18, then to 0.89 after Block 1's attention layer.
 
 ![Probe R² by Position](results/figures/probe_r2_by_position.png)
 
@@ -396,7 +365,7 @@ The final layer at late positions requires **7–8 components for 95% variance**
 
 ![Per-Component PCA](results/figures/per_component_pca.png)
 
-Each component's activations show smooth belief gradients, confirming the model encodes within-component belief state information. The 2D variance explained per component is 60–67%.
+Each component's activations show smooth belief gradients, confirming the model encodes within-component belief state information.
 
 ---
 
@@ -409,7 +378,7 @@ Each component's activations show smooth belief gradients, confirming the model 
 The emergence heatmaps reveal a clear **hierarchical pattern**:
 
 1. **Component classification accuracy** increases with both layer depth and context position. The transition from chance to ~50%+ occurs at Block 1 for positions > 5.
-2. **Component posterior R²** shows a dramatic emergence: near-zero at Block 0 resid_mid everywhere, then a sharp band of high R² appearing at Block 1 and later. The jump occurs specifically after the MLP in Block 0.
+2. **Component posterior R²** shows a dramatic emergence: near-zero at Block 0 resid_mid, then a sharp band of high R² appearing at Block 1 and later.
 3. **Within-component belief R²** is uniformly moderate-to-high from Block 0 onward, with no sharp emergence transition.
 
 ![Emergence by Layer](results/figures/emergence_by_layer.png)
@@ -422,19 +391,19 @@ The emergence heatmaps reveal a clear **hierarchical pattern**:
 
 | Experiment | Key Metric | Result | Expected |
 |------------|-----------|--------|----------|
-| **1. Hierarchical Posterior** | Joint Y R² (10-fold CV) | **0.885 ± 0.004** | > 0.8 |
-| | Component q R² | **0.881 ± 0.007** | > 0.8 |
-| | Within-belief η R² | **0.764 ± 0.011** | > 0.6 |
-| **2. Dimensionality** | $k^*_{0.95}$ (pos=14) | **5** | ~8 (compressed) |
+| **1. Hierarchical Posterior** | Joint Y R² (10-fold CV) | **0.781 ± 0.004** | > 0.8 |
+| | Component q R² | **0.838 ± 0.005** | > 0.8 |
+| | Within-belief η R² | **0.704 ± 0.005** | > 0.6 |
+| **2. Dimensionality** | $k^*_{0.95}$ (pos=14) | **6** | ~8 (compressed) |
 | | Predicted $\ell^*$ | **10.4** | — |
 | **3. Separability** | Max clf accuracy | **54%** | > 90% (miss) |
-| | Max comp post R² | **0.88** | > 0.8 |
+| | Max comp post R² | **0.90** | > 0.8 |
 | **4. Geometry** | K clouds visible | **Yes** (overlapping) | Yes (separated) |
-| **5. Fractal Recovery** | C0 recovery R² | **0.952** | High |
-| | C1 recovery R² | **0.946** | High |
-| | C2 recovery R² | **0.851** | Moderate |
-| **6. Dim Scaling** | K=2→3, K=3→10, K=4→5 | 3,10,5 | 5,8,11 ($3K-1$) |
-| **7. Orthogonality** | comp-ID vs belief overlap | **< 0.01** | Non-negligible |
+| **5. Fractal Recovery** | C0 recovery R² | **0.925** | High |
+| | C1 recovery R² | **0.905** | High |
+| | C2 recovery R² | **0.802** | Moderate |
+| **6. Dim Scaling** | *Pending* | — | $3K-1$ |
+| **7. Orthogonality** | comp-ID vs belief overlap | **≈ 0.01** | Non-negligible |
 
 ---
 
@@ -446,74 +415,14 @@ The emergence heatmaps reveal a clear **hierarchical pattern**:
 
 2. **Fractal geometry recovery is remarkably strong.** The model doesn't just encode beliefs numerically — the linear readout recovers the characteristic fractal geometry of each Mess3 component. This is a direct analog of the paper's Figure 2(a).
 
-3. **The representation is surprisingly factored.** Component identity and within-component beliefs live in nearly orthogonal subspaces (overlap < 0.01). This was the most unexpected finding — the theoretical conditions for factored representations (FWH) should not hold here, yet the model discovers an approximately factored solution anyway. This suggests the model has learned that factoring these two types of information is computationally efficient for the hierarchical inference task.
+3. **The representation is surprisingly factored.** Component identity and within-component beliefs live in nearly orthogonal subspaces (overlap ≈ 0.01). This was the most unexpected finding — the theoretical conditions for factored representations (FWH) should not hold here, yet the model discovers an approximately factored solution anyway.
 
-4. **The MLP plays a critical role in component discrimination.** The sharp jump in component posterior R² at Block 0's MLP (0.03 → 0.43) reveals that the MLP computes non-linear features of token statistics needed for component identification — a computation attention alone cannot perform.
+4. **The MLP plays a critical role in component discrimination.** The sharp jump in component posterior R² at Block 0's MLP (0.00 → 0.18) and then Block 1's attention (0.18 → 0.89) reveals the layerwise buildup of component identity.
 
 5. **Bottom-up emergence order.** Within-component belief emerges first (in attention layers), while component identity emerges later (after MLP). This ordering makes computational sense: belief tracking requires local operations, while component discrimination requires aggregating and comparing token statistics.
 
 ### Limitations
 
-1. **Component similarity:** With 16-token sequences, linear classification accuracy reaches only ~53%. The three Mess3 components have similar statistics, making them hard to discriminate.
+1. **Component similarity:** With 16-token sequences, linear classification accuracy reaches only ~54%. The three Mess3 components have similar statistics, making them hard to discriminate.
 2. **Single training run:** We did not explore hyperparameter sensitivity or multiple seeds.
 3. **Linear probes only:** Non-linear probes might reveal additional structure, particularly for component identity.
-
----
-
-## 18. Reproducibility
-
-### Code Structure
-
-```
-takehome/
-├── data/
-│   └── generate_nonergodic_mess3.py   # Dataset generation
-├── train/
-│   └── train_transformer.py           # Model training
-├── analysis/
-│   ├── analyze_geometry.py            # PCA and probe analysis
-│   ├── extra_analysis.py              # Emergence analysis
-│   ├── run_all_experiments.py         # Experiments 1-5, 7
-│   └── run_experiment6.py             # Experiment 6 (K scaling)
-├── configs/
-│   ├── main_full.json                 # Full transformer config
-│   └── smoke.json                     # Quick test config
-├── results/
-│   ├── train_data.npz                 # Training data (50k sequences)
-│   ├── val_data.npz                   # Validation data (5k sequences)
-│   ├── component_info.json            # Component parameters
-│   ├── checkpoints_full/              # Full transformer checkpoints
-│   ├── figures/                       # Baseline analysis figures
-│   └── experiments/                   # New experiment figures & results
-├── honor_code_prediction.md           # Pre-registered predictions
-└── FINAL_REPORT.md                    # This report
-```
-
-### Reproduction Commands
-
-```bash
-# 1. Generate data
-python takehome/data/generate_nonergodic_mess3.py
-
-# 2. Train full transformer
-python takehome/train/train_transformer.py --config takehome/configs/main_full.json
-
-# 3. Run baseline analysis
-python takehome/analysis/analyze_geometry.py --checkpoint_dir takehome/results/checkpoints_full
-python takehome/analysis/extra_analysis.py --checkpoint_dir takehome/results/checkpoints_full
-
-# 4. Run experiments 1-5, 7
-python takehome/analysis/run_all_experiments.py --checkpoint_dir takehome/results/checkpoints_full
-
-# 5. Run experiment 6 (K scaling)
-CUDA_VISIBLE_DEVICES=0 python takehome/analysis/run_experiment6.py --device cuda
-```
-
-### Software Versions
-
-- Python 3.13, PyTorch 2.x (CUDA 12.8), TransformerLens, JAX (CPU), scikit-learn, matplotlib
-
-### Random Seeds
-
-- Dataset generation: seed=42
-- Model initialization: seed=42

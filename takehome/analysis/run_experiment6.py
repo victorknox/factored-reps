@@ -38,8 +38,10 @@ def build_hmm(comp):
     return HiddenMarkovModel(mess3(comp["x"], comp["a"]))
 
 
-def generate_data(K, n_train=50000, n_val=5000, seq_len=16, seed=42):
-    """Generate data for K components."""
+def generate_data(K, n_per_component=50000, n_val_per_component=5000, seq_len=16, seed=42):
+    """Generate data for K components. n_per_component sequences per component."""
+    n_train = n_per_component * K
+    n_val = n_val_per_component * K
     components = ALL_COMPONENTS[:K]
     mixture_weights = np.ones(K) / K
     rng = np.random.RandomState(seed)
@@ -202,7 +204,7 @@ def main():
     parser.add_argument("--n_heads", type=int, default=2)
     parser.add_argument("--num_epochs", type=int, default=150)
     parser.add_argument("--existing_k3_dir", type=str, default=None,
-                        help="Path to existing K=3 results dir (to reuse instead of retraining)")
+                        help="Path to existing K=3 results dir with checkpoints_full/ to reuse")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
@@ -221,65 +223,52 @@ def main():
         print(f"K={K}: Generate data, train, and measure dimensionality")
         print(f"{'='*60}")
 
-        # Check if we can reuse existing K=3 model
+        # Check if we can reuse an existing trained model
         if K == 3 and args.existing_k3_dir:
-            print(f"  Using existing K=3 results from {args.existing_k3_dir}")
             existing_dir = Path(args.existing_k3_dir)
-            val_data = np.load(existing_dir / "val_data.npz")
-            tokens = val_data["tokens"]
+            ckpt_dir = existing_dir / "checkpoints_full"
+            if not ckpt_dir.exists():
+                ckpt_dir = existing_dir / "checkpoints"
+            print(f"  Reusing existing K=3 model from {ckpt_dir}")
 
-            # Load existing model
-            ckpt_dir = existing_dir / "checkpoints"
+            val_data = np.load(existing_dir / "val_data.npz")
+            val_tokens = val_data["tokens"]
+
+            from transformer_lens import HookedTransformer, HookedTransformerConfig
             with open(ckpt_dir / "model_config.json") as f:
                 mcfg = json.load(f)
-            arch = mcfg.get("architecture", "attn_only")
+            cfg = HookedTransformerConfig(
+                d_model=mcfg["d_model"], d_head=mcfg["d_head"],
+                n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
+                n_ctx=mcfg["n_ctx"], d_mlp=mcfg["d_mlp"],
+                d_vocab=mcfg["d_vocab"], act_fn=mcfg.get("act_fn", "relu"),
+                normalization_type=mcfg.get("normalization_type", "LN"),
+                device=device, seed=42,
+            )
+            model = HookedTransformer(cfg)
+            model.load_state_dict(torch.load(ckpt_dir / "best_model.pt",
+                                             map_location=device, weights_only=True))
+            model.eval()
+            k_d_model = mcfg["d_model"]
+            best_val = "existing"
 
-            if arch == "full":
-                from transformer_lens import HookedTransformer, HookedTransformerConfig
-                cfg = HookedTransformerConfig(
-                    d_model=mcfg["d_model"], d_head=mcfg["d_head"],
-                    n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
-                    n_ctx=mcfg["n_ctx"], d_mlp=mcfg["d_mlp"],
-                    d_vocab=mcfg["d_vocab"], act_fn=mcfg.get("act_fn", "relu"),
-                    normalization_type=mcfg.get("normalization_type", "LN"),
-                    device=device, seed=42,
-                )
-                model = HookedTransformer(cfg)
-                model.load_state_dict(torch.load(ckpt_dir / "best_model.pt",
-                                                 map_location=device, weights_only=True))
-                model.eval()
-                k3_d_model = mcfg["d_model"]
-            else:
-                from experiments.models.attention_only import AttentionOnly, AttentionOnlyConfig
-                cfg = AttentionOnlyConfig(
-                    d_vocab=mcfg["d_vocab"], d_model=mcfg["d_model"],
-                    n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
-                    n_ctx=mcfg["n_ctx"],
-                    normalization_type=mcfg.get("normalization_type", "LN"), seed=42,
-                )
-                model = AttentionOnly(cfg)
-                model.load_state_dict(torch.load(ckpt_dir / "best_model.pt",
-                                                 map_location=device, weights_only=True))
-                model.to(device)
-                model.eval()
-                k3_d_model = mcfg["d_model"]
-
-            activations = extract_activations(model, tokens, batch_size=512, device=device)
-            last_key = get_last_layer_key(activations, k3_d_model)
+            activations = extract_activations(model, val_tokens, batch_size=512, device=device)
+            last_key = get_last_layer_key(activations, k_d_model)
             acts = activations[last_key]
-            acts_flat = acts.reshape(-1, k3_d_model)
+            acts_flat = acts.reshape(-1, k_d_model)
 
-            cev, k95, evr = measure_dimensionality(acts_flat, max_components=min(20, k3_d_model))
-            results[K] = {"k95": k95, "best_val_loss": "existing"}
+            cev, k95, evr = measure_dimensionality(acts_flat, max_components=min(20, k_d_model))
+            results[K] = {"k95": k95, "best_val_loss": best_val}
             cev_curves[K] = cev.tolist()
             print(f"  K={K}: k*_0.95 = {k95} (theory: {3*K-1})")
             del model, activations
             continue
 
-        # Generate data
-        print(f"  Generating data for K={K}...")
-        datasets, components, _, _ = generate_data(K, n_train=50000, n_val=5000,
-                                                    seq_len=16, seed=42+K)
+        # Generate data — 50k sequences per component, same seed for all K
+        print(f"  Generating data for K={K} ({50000*K} train, {5000*K} val sequences)...")
+        datasets, components, _, _ = generate_data(K, n_per_component=50000,
+                                                    n_val_per_component=5000,
+                                                    seq_len=16, seed=42)
         train_tokens = datasets["train"]["tokens"]
         val_tokens = datasets["val"]["tokens"]
 
