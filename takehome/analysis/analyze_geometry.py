@@ -399,12 +399,22 @@ def run_joint_geometry_visualization(activations, layer_keys, component_labels,
     plt.close(fig)
 
 
-def plot_training_curves(output_dir):
+def plot_training_curves(output_dir, checkpoint_dir=None):
     """Plot training and validation loss curves."""
-    hist_path = output_dir.parent / "checkpoints" / "training_history.json"
-    if not hist_path.exists():
-        hist_path = output_dir / "training_history.json"
-    if not hist_path.exists():
+    hist_path = None
+    candidates = []
+    if checkpoint_dir:
+        candidates.append(checkpoint_dir / "training_history.json")
+    candidates += [
+        output_dir.parent / "checkpoints_full" / "training_history.json",
+        output_dir.parent / "checkpoints" / "training_history.json",
+        output_dir / "training_history.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            hist_path = p
+            break
+    if hist_path is None:
         print("No training history found, skipping loss curves.")
         return
 
@@ -510,7 +520,7 @@ def main():
                                      within_beliefs, comp_posteriors, figures_dir)
 
     print("\n=== Training Curves ===")
-    plot_training_curves(results_dir)
+    plot_training_curves(figures_dir, checkpoint_dir)
 
     # Save all results
     all_results = {

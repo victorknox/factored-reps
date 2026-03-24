@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """Experiment 6: Dimensionality Scaling with K.
 
-Train models on K=2, K=3, K=4 component mixtures and measure
+Train models on K=2,3,4,5 component mixtures and measure
 effective dimensionality scaling against the 3K-1 prediction.
+
+Two modes:
+  --n_per_component N  : each K gets N sequences per component (default: 20000)
+  --n_total N          : fixed total dataset size across all K (e.g. 100000)
+
+All models use identical hyperparameters (lr=3e-4, weight_decay=1e-4,
+grad_clip=1.0, cosine schedule) matching the main K=3 training config.
+PCA is measured on late positions only (t >= min_position) where
+the posterior has had time to converge.
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -24,32 +33,36 @@ from fwh_core.generative_processes.hidden_markov_model import HiddenMarkovModel
 import jax
 import jax.numpy as jnp
 
-# Component bank — pick K from these
+# Component bank — pick first K from these
 ALL_COMPONENTS = [
-    {"name": "C0_slow",  "x": 0.08, "a": 0.75},
-    {"name": "C1_mid",   "x": 0.15, "a": 0.55},
-    {"name": "C2_fast",  "x": 0.25, "a": 0.40},
-    {"name": "C3_xfast", "x": 0.30, "a": 0.30},
+    {"name": "C0_slow",   "x": 0.08, "a": 0.75},
+    {"name": "C1_mid",    "x": 0.15, "a": 0.55},
+    {"name": "C2_fast",   "x": 0.25, "a": 0.40},
+    {"name": "C3_xfast",  "x": 0.30, "a": 0.30},
+    {"name": "C4_xslow",  "x": 0.05, "a": 0.85},
 ]
 VOCAB_SIZE = 3
+
+# Hyperparameters matching main K=3 training config (main_full.json)
+TRAIN_HP = {
+    "lr": 3e-4,
+    "weight_decay": 1e-4,
+    "grad_clip": 1.0,
+    "batch_size": 512,
+}
 
 
 def build_hmm(comp):
     return HiddenMarkovModel(mess3(comp["x"], comp["a"]))
 
 
-def generate_data(K, n_per_component=50000, n_val_per_component=5000, seq_len=16, seed=42):
-    """Generate data for K components. n_per_component sequences per component."""
-    n_train = n_per_component * K
-    n_val = n_val_per_component * K
+def generate_data(K, n_train, n_val, seq_len=16, seed=42):
+    """Generate data for K components with specified total counts."""
     components = ALL_COMPONENTS[:K]
     mixture_weights = np.ones(K) / K
     rng = np.random.RandomState(seed)
     jax_key = jax.random.PRNGKey(seed)
     hmms = [build_hmm(c) for c in components]
-
-    trans_mats_np = [np.array(h.transition_matrices) for h in hmms]
-    init_states_np = [np.array(h.initial_state) for h in hmms]
 
     datasets = {}
     for split, n_total in [("train", n_train), ("val", n_val)]:
@@ -70,10 +83,10 @@ def generate_data(K, n_per_component=50000, n_val_per_component=5000, seq_len=16
 
         datasets[split] = {"tokens": all_tokens, "component_labels": labels}
 
-    return datasets, components, trans_mats_np, init_states_np
+    return datasets, components
 
 
-def build_model(K, d_model=64, n_heads=2, n_layers=2, n_ctx=15, device="cpu"):
+def build_model(d_model=128, n_heads=4, n_layers=4, n_ctx=15, device="cpu"):
     """Build a full HookedTransformer with MLP blocks."""
     from transformer_lens import HookedTransformer, HookedTransformerConfig
     d_head = d_model // n_heads
@@ -90,11 +103,14 @@ def build_model(K, d_model=64, n_heads=2, n_layers=2, n_ctx=15, device="cpu"):
     return model
 
 
-def train_model(model, train_tokens, val_tokens, num_epochs=150, lr=1e-3,
+def train_model(model, train_tokens, val_tokens, num_epochs=200,
                 batch_size=512, device="cpu"):
-    """Train model on next-token prediction."""
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=lr/10)
+    """Train model on next-token prediction with consistent hyperparameters."""
+    lr = TRAIN_HP["lr"]
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr,
+                                  weight_decay=TRAIN_HP["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=num_epochs, eta_min=lr / 10)
     criterion = nn.CrossEntropyLoss()
     rng = np.random.RandomState(42)
 
@@ -117,7 +133,7 @@ def train_model(model, train_tokens, val_tokens, num_epochs=150, lr=1e-3,
             logits = model(inputs)
             loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            nn.utils.clip_grad_norm_(model.parameters(), TRAIN_HP["grad_clip"])
             optimizer.step()
 
             epoch_loss += loss.item() * targets.numel()
@@ -199,12 +215,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--n_layers", type=int, default=2)
-    parser.add_argument("--n_heads", type=int, default=2)
-    parser.add_argument("--num_epochs", type=int, default=150)
-    parser.add_argument("--existing_k3_dir", type=str, default=None,
-                        help="Path to existing K=3 results dir with checkpoints_full/ to reuse")
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--n_layers", type=int, default=4)
+    parser.add_argument("--n_heads", type=int, default=4)
+    parser.add_argument("--num_epochs", type=int, default=200)
+    parser.add_argument("--n_per_component", type=int, default=20000,
+                        help="Sequences per component (ignored if --n_total is set)")
+    parser.add_argument("--n_total", type=int, default=None,
+                        help="Fixed total dataset size across all K (overrides --n_per_component)")
+    parser.add_argument("--min_position", type=int, default=10,
+                        help="Minimum context position for PCA (default: 10, use late positions only)")
+    parser.add_argument("--output_suffix", type=str, default="",
+                        help="Suffix for output filenames (e.g. '_fixed100k')")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
@@ -212,8 +234,22 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = args.device
-    K_values = [2, 3, 4]
+    K_values = [2, 3, 4, 5]
     d_model = args.d_model
+    min_pos = args.min_position
+
+    # Determine data mode
+    if args.n_total is not None:
+        data_mode = "fixed_total"
+        print(f"Data mode: fixed total = {args.n_total} train sequences for all K")
+    else:
+        data_mode = "per_component"
+        print(f"Data mode: {args.n_per_component} sequences per component")
+
+    print(f"Hyperparameters: lr={TRAIN_HP['lr']}, weight_decay={TRAIN_HP['weight_decay']}, "
+          f"grad_clip={TRAIN_HP['grad_clip']}")
+    print(f"Architecture: d_model={d_model}, n_layers={args.n_layers}, n_heads={args.n_heads}")
+    print(f"PCA on positions >= {min_pos}")
 
     results = {}
     cev_curves = {}
@@ -223,85 +259,60 @@ def main():
         print(f"K={K}: Generate data, train, and measure dimensionality")
         print(f"{'='*60}")
 
-        # Check if we can reuse an existing trained model
-        if K == 3 and args.existing_k3_dir:
-            existing_dir = Path(args.existing_k3_dir)
-            ckpt_dir = existing_dir / "checkpoints_full"
-            if not ckpt_dir.exists():
-                ckpt_dir = existing_dir / "checkpoints"
-            print(f"  Reusing existing K=3 model from {ckpt_dir}")
+        # Compute train/val sizes
+        if args.n_total is not None:
+            n_train = args.n_total
+            n_val = max(args.n_total // 10, 5000)
+        else:
+            n_train = args.n_per_component * K
+            n_val = max(args.n_per_component // 10, 1000) * K
 
-            val_data = np.load(existing_dir / "val_data.npz")
-            val_tokens = val_data["tokens"]
-
-            from transformer_lens import HookedTransformer, HookedTransformerConfig
-            with open(ckpt_dir / "model_config.json") as f:
-                mcfg = json.load(f)
-            cfg = HookedTransformerConfig(
-                d_model=mcfg["d_model"], d_head=mcfg["d_head"],
-                n_heads=mcfg["n_heads"], n_layers=mcfg["n_layers"],
-                n_ctx=mcfg["n_ctx"], d_mlp=mcfg["d_mlp"],
-                d_vocab=mcfg["d_vocab"], act_fn=mcfg.get("act_fn", "relu"),
-                normalization_type=mcfg.get("normalization_type", "LN"),
-                device=device, seed=42,
-            )
-            model = HookedTransformer(cfg)
-            model.load_state_dict(torch.load(ckpt_dir / "best_model.pt",
-                                             map_location=device, weights_only=True))
-            model.eval()
-            k_d_model = mcfg["d_model"]
-            best_val = "existing"
-
-            activations = extract_activations(model, val_tokens, batch_size=512, device=device)
-            last_key = get_last_layer_key(activations, k_d_model)
-            acts = activations[last_key]
-            acts_flat = acts.reshape(-1, k_d_model)
-
-            cev, k95, evr = measure_dimensionality(acts_flat, max_components=min(20, k_d_model))
-            results[K] = {"k95": k95, "best_val_loss": best_val}
-            cev_curves[K] = cev.tolist()
-            print(f"  K={K}: k*_0.95 = {k95} (theory: {3*K-1})")
-            del model, activations
-            continue
-
-        # Generate data — 50k sequences per component, same seed for all K
-        print(f"  Generating data for K={K} ({50000*K} train, {5000*K} val sequences)...")
-        datasets, components, _, _ = generate_data(K, n_per_component=50000,
-                                                    n_val_per_component=5000,
-                                                    seq_len=16, seed=42)
+        print(f"  Generating data for K={K} ({n_train} train, {n_val} val sequences)...")
+        datasets, components = generate_data(K, n_train=n_train, n_val=n_val,
+                                              seq_len=16, seed=42)
         train_tokens = datasets["train"]["tokens"]
         val_tokens = datasets["val"]["tokens"]
 
         # Build and train model
         n_ctx = train_tokens.shape[1] - 1
         print(f"  Training model (d_model={d_model}, n_layers={args.n_layers})...")
-        model = build_model(K, d_model=d_model, n_heads=args.n_heads,
-                           n_layers=args.n_layers, n_ctx=n_ctx, device=device)
+        model = build_model(d_model=d_model, n_heads=args.n_heads,
+                            n_layers=args.n_layers, n_ctx=n_ctx, device=device)
         n_params = sum(p.numel() for p in model.parameters())
         print(f"    {n_params:,} parameters")
 
         model, best_val = train_model(model, train_tokens, val_tokens,
-                                      num_epochs=args.num_epochs, device=device)
+                                       num_epochs=args.num_epochs, device=device)
         print(f"  Best val loss: {best_val:.4f}")
 
         # Extract activations
         print(f"  Extracting activations...")
         activations = extract_activations(model, val_tokens, batch_size=512, device=device)
         last_key = get_last_layer_key(activations, d_model)
-        acts = activations[last_key]
-        acts_flat = acts.reshape(-1, d_model)
+        acts = activations[last_key]  # (n_seq, n_positions, d_model)
+
+        # Use only late positions (t >= min_position) for PCA
+        n_positions = acts.shape[1]
+        if min_pos < n_positions:
+            acts_late = acts[:, min_pos:, :]
+        else:
+            acts_late = acts
+        acts_flat = acts_late.reshape(-1, d_model)
+        print(f"  PCA on positions [{min_pos}, {n_positions-1}]: {acts_flat.shape[0]} vectors")
 
         cev, k95, evr = measure_dimensionality(acts_flat)
-        results[K] = {"k95": k95, "best_val_loss": float(best_val)}
+        results[K] = {"k95": k95, "best_val_loss": float(best_val),
+                       "n_train": n_train, "n_val": n_val}
         cev_curves[K] = cev.tolist()
         print(f"  K={K}: k*_0.95 = {k95} (theory: {3*K-1})")
 
         del model, activations
+        torch.cuda.empty_cache()
 
     # ─── Plots ───
     print("\nGenerating plots...")
+    suffix = args.output_suffix
 
-    # Bar chart: measured vs predicted
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     K_vals = sorted(results.keys())
@@ -315,7 +326,8 @@ def main():
     ax1.set_xticks(x)
     ax1.set_xticklabels([f"K={K}" for K in K_vals])
     ax1.set_ylabel("Effective Dimensionality")
-    ax1.set_title("Dimensionality Scaling: Measured vs Predicted")
+    title_mode = f"(fixed {args.n_total} total)" if args.n_total else f"({args.n_per_component}/comp)"
+    ax1.set_title(f"Dimensionality Scaling {title_mode}")
     ax1.legend()
     ax1.grid(True, alpha=0.3, axis='y')
 
@@ -323,30 +335,36 @@ def main():
     for K in K_vals:
         cev = cev_curves[K]
         ax2.plot(range(1, len(cev)+1), cev, 'o-', markersize=4, label=f'K={K} (measured)')
-    # Theoretical predictions as vertical dashed lines
     for K in K_vals:
-        ax2.axvline(3*K - 1, color='gray', linestyle='--', alpha=0.5)
-        ax2.text(3*K - 1 + 0.2, 0.5, f"3×{K}-1={3*K-1}", fontsize=8, alpha=0.6)
+        theory = 3*K - 1
+        if theory <= 20:
+            ax2.axvline(theory, color='gray', linestyle='--', alpha=0.5)
+            ax2.text(theory + 0.2, 0.5, f"3x{K}-1={theory}", fontsize=8, alpha=0.6)
 
     ax2.axhline(0.95, color='gray', linestyle=':', alpha=0.5)
     ax2.set_xlabel("# PCA Components")
     ax2.set_ylabel("Cumulative Explained Variance")
-    ax2.set_title("CEV Curves by K")
+    ax2.set_title(f"CEV Curves by K (positions >= {min_pos})")
     ax2.legend(fontsize=8)
     ax2.set_ylim(0.5, 1.02)
 
     fig.suptitle("Experiment 6: Dimensionality Scaling with K", fontsize=13)
     fig.tight_layout()
-    fig.savefig(output_dir / "exp6_dimensionality_scaling.png", dpi=150)
+    fig.savefig(output_dir / f"exp6_dimensionality_scaling{suffix}.png", dpi=150)
     plt.close(fig)
 
     # Save results
     exp6_results = {
+        "data_mode": data_mode,
+        "n_total": args.n_total,
+        "n_per_component": args.n_per_component,
+        "min_position": min_pos,
+        "hyperparameters": TRAIN_HP,
         "results_by_K": {str(K): v for K, v in results.items()},
         "cev_curves": {str(K): v for K, v in cev_curves.items()},
         "theoretical_prediction": {str(K): 3*K-1 for K in K_vals},
     }
-    with open(output_dir / "exp6_results.json", "w") as f:
+    with open(output_dir / f"exp6_results{suffix}.json", "w") as f:
         json.dump(exp6_results, f, indent=2, default=str)
 
     print(f"\nExperiment 6 complete. Results saved to {output_dir}")

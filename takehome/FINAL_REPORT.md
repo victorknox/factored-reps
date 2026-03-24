@@ -306,23 +306,57 @@ Each row shows one component. Left: ground-truth belief trajectories projected t
 
 ### Setup
 
-Three separate full transformers (d_model=128, 4 layers, 4 heads) were trained on K=2, K=3, and K=4 component mixtures with 50k sequences per component each, 200 epochs. For K=3, the existing trained model was reused.
+Separate full transformers (d_model=128, 4 layers, 4 heads, 796K params) were trained from scratch for each K ∈ {2, 3, 4, 5} using **identical hyperparameters** (lr=3×10⁻⁴, weight_decay=10⁻⁴, grad_clip=1.0, cosine schedule, 200 epochs) matching the main K=3 training config. PCA is computed on **late positions only** (t ≥ 10) where the posterior has had time to converge, avoiding dilution from early-position token embeddings.
 
-### Results
+The component bank extends to K=5:
+
+| Component | $x$ | $a$ | Description |
+|-----------|-----|-----|-------------|
+| C0 | 0.08 | 0.75 | Slow mixing |
+| C1 | 0.15 | 0.55 | Moderate |
+| C2 | 0.25 | 0.40 | Fast mixing |
+| C3 | 0.30 | 0.30 | Very fast |
+| C4 | 0.05 | 0.85 | Very slow |
+
+Two data regimes were tested to disentangle the effect of K from dataset size:
+
+1. **Per-component scaling:** 20,000 sequences per component (total grows with K)
+2. **Fixed-total:** 100,000 total sequences for all K (per-component count shrinks with K)
+
+### Results: Per-Component Scaling (20k/component)
 
 | K | Measured $k^*_{0.95}$ | Theory $3K-1$ | Best Val Loss |
 |---|----------------------|---------------|---------------|
-| 2 | **3** | 5 | 1.051 |
-| 3 | **10** | 8 | 1.074 |
-| 4 | **5** | 11 | 1.083 |
+| 2 | **11** | 5 | 1.054 |
+| 3 | **10** | 8 | 1.075 |
+| 4 | **9** | 11 | 1.083 |
+| 5 | **8** | 14 | 1.041 |
 
-![Dimensionality Scaling](results/experiments/exp6_dimensionality_scaling.png)
+![Dimensionality Scaling (per-component)](results/experiments/exp6_dimensionality_scaling_percomp.png)
+
+### Results: Fixed Total (100k)
+
+| K | Measured $k^*_{0.95}$ | Theory $3K-1$ | Best Val Loss |
+|---|----------------------|---------------|---------------|
+| 2 | **7** | 5 | 1.055 |
+| 3 | **6** | 8 | 1.075 |
+| 4 | **8** | 11 | 1.083 |
+| 5 | **8** | 14 | 1.041 |
+
+![Dimensionality Scaling (fixed total)](results/experiments/exp6_dimensionality_scaling_fixed100k.png)
 
 ### Interpretation
 
-The measured dimensionality does **not** follow the $3K-1$ prediction closely. The K=2 and K=4 models compress their representations significantly below the theoretical prediction (3 vs 5, and 5 vs 11), while the K=3 model slightly exceeds it (10 vs 8).
+The measured dimensionality does **not** follow the $3K-1$ prediction. In both data regimes, dimensionality remains in a narrow range (6–11) rather than growing linearly with K.
 
-The key takeaway is that effective dimensionality **does increase with K**, but more slowly than the $3K-1$ bound. This suggests the model discovers compressed representations that exploit shared structure across components.
+**Per-component regime:** Dimensionality actually *decreases* with K (11 → 10 → 9 → 8), the opposite of the theoretical prediction. With more data per run (as K grows), the model may be learning more efficient shared representations.
+
+**Fixed-total regime:** Dimensionality is flatter (7 → 6 → 8 → 8), with a slight increase for K ≥ 4 but far below the $3K-1$ bound.
+
+**Key takeaways:**
+1. The model compresses higher-K mixtures into shared subspaces rather than allocating $3K-1$ independent dimensions.
+2. The belief-belief overlap results from Experiment 7 (0.72–0.90) explain this: components share belief-tracking directions, so adding a new component doesn't add 3 new dimensions.
+3. K=5 achieves notably lower val loss (1.041) than K=3/4, likely because the C4 component (x=0.05, a=0.85) is highly predictable, contributing little additional representational burden.
 
 ---
 
@@ -418,7 +452,7 @@ The emergence heatmaps reveal a clear **hierarchical pattern**:
 | **5. Fractal Recovery** | C0 recovery R² | **0.925** | High |
 | | C1 recovery R² | **0.905** | High |
 | | C2 recovery R² | **0.802** | Moderate |
-| **6. Dim Scaling** | K=2→3, K=3→10, K=4→5 | 3, 10, 5 | 5, 8, 11 ($3K-1$) |
+| **6. Dim Scaling** | $k^*_{0.95}$ (per-comp / fixed) | 11,10,9,8 / 7,6,8,8 | 5,8,11,14 ($3K-1$) |
 | **7. Orthogonality** | comp-ID vs belief overlap | **≈ 0.01** | Non-negligible |
 
 ---
