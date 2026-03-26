@@ -360,6 +360,39 @@ The measured dimensionality does **not** follow the $3K-1$ prediction. In both d
 
 ---
 
+## 13b. Dataset Size Sensitivity Ablation
+
+**Goal:** Characterize how key metrics depend on training set size, to assess robustness of findings and identify confounds in Experiment 6.
+
+### Setup
+
+Six K=3 models were trained from scratch with identical architecture and hyperparameters, varying only the total training set size: 20k, 40k, 60k, 100k, 150k, 200k sequences. All other settings match the main training config. PCA and probes are computed on late positions (t ≥ 10).
+
+### Results
+
+| Train Size | $k^*_{0.95}$ | Joint $Y$ R² | Comp $q_c$ R² | Belief $\eta_c$ R² | Comp-Belief Overlap | Val Loss |
+|-----------|-------------|-------------|--------------|-------------------|-------------------|----------|
+| 20k | **19** | 0.744 | 0.827 | 0.795 | 0.017 | 1.0771 |
+| 40k | **14** | 0.776 | 0.870 | 0.816 | 0.012 | 1.0752 |
+| 60k | **10** | 0.794 | 0.887 | 0.822 | 0.009 | 1.0752 |
+| 100k | **6** | 0.752 | 0.900 | 0.810 | 0.020 | 1.0749 |
+| 150k | **4** | 0.732 | 0.902 | 0.795 | 0.069 | 1.0741 |
+| 200k | **3** | 0.641 | 0.780 | 0.758 | 0.200 | 1.0738 |
+
+![Dataset Size Ablation](results/experiments/datasize_ablation.png)
+
+### Key Findings
+
+**PCA dimensionality ($k^*_{0.95}$) is dominated by dataset size.** It drops monotonically from 19 → 3 as training data increases from 20k to 200k — a 6× change for the same K. This means the cross-K comparisons in Experiment 6 are confounded: the dimensionality differences across K partly reflect dataset size effects rather than representational structure. The $k^*_{0.95}$ metric, at least as measured here, is not a reliable indicator of the intrinsic dimensionality of the learned posterior representation.
+
+**Probe R² and subspace overlap are stable in the 40k–100k range.** Component R² is 0.87–0.90, joint R² is 0.75–0.79, and comp-belief overlap is 0.009–0.020 across this range. The factored structure finding (overlap ≈ 0.01) is robust within this regime.
+
+**Large dataset regime (150k–200k) shows degradation.** Val loss continues to improve (the model predicts better), but linear probe R² drops and the factored structure partially collapses (overlap → 0.20 at 200k). This suggests the model shifts toward a more nonlinear, compressed encoding that is less amenable to linear readout — it achieves better predictions by packing information into fewer dimensions, at the cost of linear accessibility.
+
+**Implications for Experiment 6:** The per-component regime (20k/comp) gives K=2 only 40k total data while K=5 gets 100k, placing different K values at very different points on the sensitivity curve above. The fixed-total (100k) regime is a fairer comparison, but even there, the $k^*_{0.95}$ metric's strong sensitivity to training dynamics limits its interpretability as a measure of representational dimensionality.
+
+---
+
 ## 14. Residual Stream Geometry Analysis (Baseline)
 
 ### 14.1 PCA Structure: Emerging Component Separation
@@ -474,5 +507,7 @@ The emergence heatmaps reveal a clear **hierarchical pattern**:
 ### Limitations
 
 1. **Component similarity:** With 16-token sequences, linear classification accuracy reaches only ~54%. The three Mess3 components have similar statistics, making them hard to discriminate.
-2. **Single training run:** We did not explore hyperparameter sensitivity or multiple seeds.
-3. **Linear probes only:** Non-linear probes might reveal additional structure, particularly for component identity.
+2. **PCA dimensionality is dataset-size sensitive.** The $k^*_{0.95}$ metric varies from 19 → 3 across a 10× range of training set sizes (Section 13b), making it unreliable for cross-condition comparisons. The Experiment 6 dimensionality scaling results should be interpreted with this caveat.
+3. **Linear probe degradation at scale.** With 200k training sequences, the model achieves lower val loss but linear readability drops and the factored structure partially collapses (overlap → 0.20). This suggests a phase transition toward more nonlinear representations at larger data scales.
+4. **Single training run:** We did not explore hyperparameter sensitivity or multiple seeds.
+5. **Linear probes only:** Non-linear probes might reveal additional structure, particularly for component identity.
